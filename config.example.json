@@ -1,0 +1,27 @@
+{
+  "recipient_email": "you@example.com",
+  "state_dir": "~/.security-sweep",
+  "report_dir": "~/.security-sweep/reports",
+  "report_brand_line": "PERSONAL SECURITY SWEEP",
+  "email_enabled": true,
+  "chrome_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "log_file": null,
+  "surfaces": {
+    "notes": "~/Documents/Notes",
+    "gdrive": "~/Library/CloudStorage/GoogleDrive-you@example.com",
+    "agent-config": "~/.claude",
+    "desktop": "~/Desktop",
+    "documents": "~/Documents",
+    "downloads": "~/Downloads"
+  },
+  "extra_files": [
+    "~/.claude.json",
+    "~/.zsh_history",
+    "~/.zshrc",
+    "~/.bash_history",
+    "~/.gitconfig",
+    "~/.netrc"
+  ],
+  "skip_dirs": [],
+  "allow_path_patterns": []
+}
