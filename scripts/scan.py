@@ -20,6 +20,7 @@ Allowlist: <state_dir>/allowlist.json
 Allowlisted findings are counted but not re-reported.
 """
 
+import argparse
 import hashlib
 import json
 import math
@@ -297,10 +298,17 @@ def walk_surface(name: str, root: Path, findings: list, stats_all: dict):
     stats_all[name] = stats
 
 
-def main():
-    t0 = time.time()
-    STATE.mkdir(parents=True, exist_ok=True)
+SEV_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "INFO": 3}
+ESCALATE_AFTER_DAYS = int(CFG.get("escalate_after_days", 14))
 
+
+def fkey(f):
+    """Stable cross-run identity for a finding (survives edits to the matched text)."""
+    return f"{f['surface']}|{f['path']}|{f['rule']}"
+
+
+def collect():
+    """Walk every surface and return (deduped findings, stats, suppressed count)."""
     # Pre-flight: loud fail on missing surfaces
     missing = [n for n, p in SURFACES.items() if not p.exists()]
     if missing:
@@ -334,8 +342,7 @@ def main():
         except json.JSONDecodeError:
             print("WARNING: allowlist.json unreadable — ignoring", file=sys.stderr)
     active = [f for f in findings
-              if f["id"] not in allow_ids
-              and f"{f['surface']}|{f['path']}|{f['rule']}" not in allow_keys]
+              if f["id"] not in allow_ids and fkey(f) not in allow_keys]
     suppressed = len(findings) - len(active)
 
     # Dedupe (same file+rule keeps first line, counts occurrences)
@@ -349,17 +356,70 @@ def main():
             seen[key] = f
             deduped.append(f)
 
-    sev_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "INFO": 3}
-    deduped.sort(key=lambda f: (sev_rank[f["severity"]], f["surface"], f["path"]))
+    deduped.sort(key=lambda f: (SEV_RANK[f["severity"]], f["surface"], f["path"]))
+    return deduped, stats_all, suppressed
 
-    # Delta vs previous run
-    prev_ids = set()
+
+def load_prev():
+    """Previous findings list (empty on first run or unreadable state)."""
     if FINDINGS_JSON.exists():
         try:
-            prev_ids = {f["id"] for f in json.loads(FINDINGS_JSON.read_text()).get("findings", [])}
+            return json.loads(FINDINGS_JSON.read_text()).get("findings", [])
         except (json.JSONDecodeError, KeyError):
             pass
+    return []
+
+
+def main():
+    ap = argparse.ArgumentParser(description="security-sweep scanner")
+    ap.add_argument("--verify", action="store_true",
+                    help="Re-scan and report what changed vs the last saved findings, "
+                         "WITHOUT overwriting them. Use mid-remediation to confirm fixes landed.")
+    args = ap.parse_args()
+
+    t0 = time.time()
+    STATE.mkdir(parents=True, exist_ok=True)
+    today = datetime.now(timezone.utc).date()
+
+    deduped, stats_all, suppressed = collect()
+    prev = load_prev()
+    prev_by_key = {}
+    for pf in prev:
+        # keep the earliest first_seen if a key somehow appears twice
+        k = fkey(pf)
+        fs = pf.get("first_seen")
+        if k not in prev_by_key or (fs and fs < prev_by_key[k]):
+            prev_by_key[k] = fs or None
+    prev_keys = set(prev_by_key)
+    prev_ids = {pf["id"] for pf in prev}
+
+    # Carry first_seen forward; stamp age
+    cur_keys = set()
+    for f in deduped:
+        k = fkey(f)
+        cur_keys.add(k)
+        first = prev_by_key.get(k) or today.isoformat()
+        f["first_seen"] = first
+        try:
+            f["age_days"] = (today - datetime.fromisoformat(first).date()).days
+        except ValueError:
+            f["age_days"] = 0
+
     new_ids = {f["id"] for f in deduped} - prev_ids
+    resolved = [pf for pf in prev if fkey(pf) not in cur_keys]
+    persistent = [f for f in deduped if f["age_days"] >= ESCALATE_AFTER_DAYS]
+
+    if args.verify:
+        # Non-destructive: report the diff against the saved baseline, write nothing.
+        print(f"VERIFY vs {FINDINGS_JSON} (baseline left untouched)")
+        print(f"  resolved since baseline: {len(resolved)}")
+        for pf in resolved:
+            print(f"    - [{pf['severity']}] {pf['surface']}/{pf['path']} ({pf['rule']})")
+        print(f"  still open: {len(deduped)}  |  newly appeared: {len(new_ids)}")
+        for f in deduped:
+            if f["id"] in new_ids:
+                print(f"    + [{f['severity']}] {f['surface']}/{f['path']} ({f['rule']})")
+        sys.exit(0)
 
     result = {
         "generated": datetime.now(timezone.utc).isoformat(),
@@ -368,8 +428,15 @@ def main():
         "counts": {
             "total": len(deduped),
             "new": len(new_ids),
+            "resolved": len(resolved),
+            "persistent": len(persistent),
             "suppressed_allowlist": suppressed,
-            "by_severity": {s: sum(1 for f in deduped if f["severity"] == s) for s in sev_rank},
+            "by_severity": {s: sum(1 for f in deduped if f["severity"] == s) for s in SEV_RANK},
+        },
+        "delta": {
+            "new_ids": sorted(new_ids),
+            "resolved": [{"surface": pf["surface"], "path": pf["path"], "rule": pf["rule"],
+                          "severity": pf["severity"]} for pf in resolved],
         },
         "findings": deduped,
     }
@@ -384,16 +451,24 @@ def main():
         f"# Security sweep findings — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         "",
         f"Scanned {sum(s.get('files', 0) for s in stats_all.values())} files in {result['duration_sec']}s. "
-        f"{result['counts']['total']} open findings ({result['counts']['new']} new, {suppressed} allowlisted). "
+        f"{result['counts']['total']} open findings ({result['counts']['new']} new, "
+        f"{result['counts']['resolved']} resolved since last run, "
+        f"{result['counts']['persistent']} persistent ≥{ESCALATE_AFTER_DAYS}d, {suppressed} allowlisted). "
         f"Dataless cloud placeholders skipped: {sum(s.get('dataless', 0) for s in stats_all.values())}.",
         "",
-        "| Sev | Surface | Path | Rule | Line | Match | × |",
-        "|-----|---------|------|------|------|-------|---|",
+        "| Sev | Age | Surface | Path | Rule | Line | Match | × |",
+        "|-----|-----|---------|------|------|------|-------|---|",
     ]
     for f in deduped:
-        flag = " NEW" if f["id"] in new_ids else ""
+        flag = " NEW" if f["id"] in new_ids else (" ‼" if f["age_days"] >= ESCALATE_AFTER_DAYS else "")
+        age = "new" if f["age_days"] == 0 else f"{f['age_days']}d"
         lines.append(
-            f"| {f['severity']}{flag} | {f['surface']} | {f['path']} | {f['rule']} | {f['line']} | `{f['match']}` | {f['count']} |")
+            f"| {f['severity']}{flag} | {age} | {f['surface']} | {f['path']} | {f['rule']} | "
+            f"{f['line']} | `{f['match']}` | {f['count']} |")
+    if resolved:
+        lines += ["", f"## Resolved since last run ({len(resolved)})", ""]
+        for pf in resolved:
+            lines.append(f"- [{pf['severity']}] {pf['surface']}/{pf['path']} ({pf['rule']})")
     FINDINGS_MD.write_text("\n".join(lines) + "\n")
 
     if not FINDINGS_JSON.exists() or time.time() - FINDINGS_JSON.stat().st_mtime > 60:

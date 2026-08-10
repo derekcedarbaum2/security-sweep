@@ -6,6 +6,7 @@
   "email_enabled": true,
   "chrome_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "log_file": null,
+  "escalate_after_days": 14,
   "surfaces": {
     "notes": "~/Documents/Notes",
     "gdrive": "~/Library/CloudStorage/GoogleDrive-you@example.com",

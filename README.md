@@ -21,13 +21,21 @@ machine. The first scan of a working setup typically finds dozens of these.
    card numbers (Luhn-gated), bank/routing numbers (checksum-gated),
    identity/tax/medical/financial documents by filename. Every match is
    masked, everywhere.
-2. **Reports** to a self-contained HTML/PDF: severity counts, per-surface
-   coverage, a proposed disposition per finding, a standing remediation plan,
-   and a hardening roadmap. Emails it to you weekly via Mail.app.
-3. **Walks through remediation with you.** `docs/walkthrough.md` is the
+2. **Tracks each finding's age across runs and escalates the persistent ones.**
+   A finding open 20 days reads differently from one found this morning. The
+   report leads with anything unresolved past a threshold (default 14 days),
+   and counts what you resolved since the last run. Age is the escalation
+   signal, borrowed from the "PR open >12h → escalate" pattern.
+3. **Reports** to a self-contained HTML/PDF: severity counts, persistent and
+   resolved bands, per-surface coverage, a proposed disposition per finding, a
+   standing remediation plan, and a hardening roadmap. Emails it to you weekly
+   via Mail.app.
+4. **Walks through remediation with you.** `docs/walkthrough.md` is the
    session playbook: your agent verifies each finding (masked), proposes a
    disposition, and waits for your call. Rotate, relocate to keychain,
-   quarantine, redact, allowlist, or accept.
+   quarantine, redact, allowlist, or accept. Then `scan.py --verify` re-scans
+   and confirms your fixes actually landed, without disturbing the weekly
+   baseline. The next scan is the cheap oracle for "done."
 
 No LLM in the scan path. No network calls. Nothing leaves your machine except
 the email you send yourself.

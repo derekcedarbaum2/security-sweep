@@ -71,6 +71,23 @@ test card numbers by concatenation, write SSN-shaped examples as NNN-NN-NNNN,
 and allowlist your harness's transcript directories for rules they
 legitimately trip.
 
+## Closing the loop: verify your fixes landed
+
+After a session, run `scan.py --verify`. It re-scans live and diffs against the
+saved weekly baseline without overwriting it, so you get a clean "resolved N,
+still open N, newly appeared N" without disturbing next week's age tracking.
+This is the cheap oracle for done: the same idea a PR-review agent uses when it
+waits for merge checks to pass. A fix you "made" that still shows up here is a
+fix that did not land (the value is still in a backup, or you edited the wrong
+copy).
+
+The weekly scan also carries each finding's `first_seen` date forward and
+stamps an age. Anything open past the escalation threshold (config
+`escalate_after_days`, default 14) leads the report. Persistence is the
+signal: a secret that has sat exposed for three weekly reports has had three
+weeks of sessions and processes able to reach it. Clear or explicitly accept
+those first.
+
 ## Dispositions that need a human beyond the keyboard
 
 Some fixes the agent cannot do and should hand you as steps:

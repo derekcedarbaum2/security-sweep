@@ -70,15 +70,25 @@ def chunk(lst, n):
         yield lst[i:i + n]
 
 
+def age_cell(f, escalate_days=14):
+    age = f.get("age_days", 0)
+    if age == 0:
+        return '<span class="new-badge">NEW</span>'
+    label = f"{age}d"
+    if age >= escalate_days:
+        return f'<span class="stale-badge">‼ {label}</span>'
+    return f'<span class="mono">{label}</span>'
+
+
 def findings_rows(fs, new_ids):
     rows = []
     for f in fs:
-        badge = '<span class="new-badge">NEW</span> ' if f["id"] in new_ids else ""
         prop = PROPOSALS.get(f["rule"], ("Review", ""))[0]
         rows.append(
             f'<tr><td><span class="sev" style="color:{SEV_COLOR[f["severity"]]}">{f["severity"]}</span></td>'
+            f'<td>{age_cell(f)}</td>'
             f'<td class="mono">{esc(f["surface"])}</td>'
-            f'<td class="path">{badge}{esc(f["path"])}</td>'
+            f'<td class="path">{esc(f["path"])}</td>'
             f'<td class="mono">{esc(f["rule"])}</td>'
             f'<td class="mono">{esc(f["match"])}{"" if f.get("count", 1) == 1 else " x" + str(f["count"])}</td>'
             f'<td>{prop}</td></tr>'
@@ -103,7 +113,11 @@ def main():
     fs = data["findings"]
     counts = data["counts"]
     stats = data["stats"]
-    new_ids = set()
+    delta = data.get("delta", {})
+    new_ids = set(delta.get("new_ids", []))
+    resolved = delta.get("resolved", [])
+    escalate_days = 14
+    persistent = [f for f in fs if f.get("age_days", 0) >= escalate_days]
     date_str = datetime.now().strftime("%Y-%m-%d")
     date_h = datetime.now().strftime("%B %d, %Y")
 
@@ -142,6 +156,13 @@ def main():
     <div class="stat-card"><div class="stat-num">{files_total:,}</div><div class="stat-label">FILES SCANNED</div></div>
   </div>
 
+  <div class="stat-row">
+    <div class="stat-card"><div class="stat-num" style="color:#9a3434">{counts.get("persistent", 0)}</div><div class="stat-label">PERSISTENT {escalate_days}+ DAYS</div></div>
+    <div class="stat-card"><div class="stat-num">{counts.get("new", 0)}</div><div class="stat-label">NEW THIS RUN</div></div>
+    <div class="stat-card"><div class="stat-num" style="color:#2f7d4f">{counts.get("resolved", 0)}</div><div class="stat-label">RESOLVED SINCE LAST RUN</div></div>
+  </div>
+  {("<p class='note'>Resolved since last run: " + "; ".join(esc(r["surface"] + "/" + r["path"]) + " (" + esc(r["rule"]) + ")" for r in resolved[:8]) + (" …" if len(resolved) > 8 else "") + "</p>") if resolved else ""}
+
   <h2>Coverage</h2>
   <table><thead><tr><th>Surface</th><th>Files</th><th>Content-scanned</th><th>Cloud placeholders skipped</th></tr></thead>
   <tbody>{surface_rows}</tbody></table>
@@ -150,13 +171,30 @@ def main():
   Allowlisted (accepted-risk) findings suppressed: {counts["suppressed_allowlist"]}.</p>
 </div>""")
 
+    # ---- Escalation band: persistent findings lead the report (the PR-agent
+    #      ">12h open → escalate" idea, applied to findings that outlive weeks)
+    if persistent:
+        pr = findings_rows(sorted(persistent, key=lambda f: -f.get("age_days", 0)), new_ids)
+        top = "".join(list(pr)[:12])
+        extra = f'<p class="note">… and {len(persistent)-12} more persistent findings in the tables below.</p>' if len(persistent) > 12 else ""
+        sheets.append(f"""
+<div class="sheet">
+  <h2 style="border-color:#9a3434">Persistent — open {escalate_days}+ days</h2>
+  <p>These findings have survived at least {escalate_days} days of weekly reports without being
+  resolved or accepted. Age is the escalation signal: the longer a secret or document sits exposed,
+  the more sessions and processes have had a chance to reach it. Clear or explicitly accept these first.</p>
+  <table class="findings"><thead><tr><th>Sev</th><th>Age</th><th>Surface</th><th>Path</th><th>Rule</th><th>Match (masked)</th><th>Proposed</th></tr></thead>
+  <tbody>{top}</tbody></table>
+  {extra}
+</div>""")
+
     # ---- Findings sheets (CRITICAL + HIGH), 16 rows per sheet
     rows = findings_rows(crit_high, new_ids)
     for i, batch in enumerate(chunk(rows, 16)):
         sheets.append(f"""
 <div class="sheet">
   <h2>Critical &amp; High findings{" (cont.)" if i else ""}</h2>
-  <table class="findings"><thead><tr><th>Sev</th><th>Surface</th><th>Path</th><th>Rule</th><th>Match (masked)</th><th>Proposed</th></tr></thead>
+  <table class="findings"><thead><tr><th>Sev</th><th>Age</th><th>Surface</th><th>Path</th><th>Rule</th><th>Match (masked)</th><th>Proposed</th></tr></thead>
   <tbody>{''.join(batch)}</tbody></table>
 </div>""")
 
@@ -277,6 +315,7 @@ tbody tr:nth-child(even) {{ background:#FCFCFC; }}
 .path {{ word-break:break-all; font-size:9.5px; }}
 .sev {{ font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; }}
 .new-badge {{ font-family:'JetBrains Mono',monospace; font-size:8px; background:var(--accent-light); color:var(--charcoal); padding:1px 4px; border-radius:3px; }}
+.stale-badge {{ font-family:'JetBrains Mono',monospace; font-size:8px; font-weight:700; background:#f3d9d9; color:#9a3434; padding:1px 4px; border-radius:3px; white-space:nowrap; }}
 .card {{ background:var(--bg-card); border:1px solid var(--border); border-radius:6px; padding:10px 14px; margin:8px 0; page-break-inside:avoid; }}
 .card ul {{ margin:4px 0; padding-left:18px; }}
 .card li {{ margin:3px 0; }}
