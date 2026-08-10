@@ -54,8 +54,22 @@ HTML=$(python3 "$REPO/scripts/build_report.py" --out "$REPORTS") || fail "build_
 PDF="${HTML%.html}.pdf"
 if [ -x "$CHROME" ]; then
   rm -f "$PDF"
-  "$CHROME" --headless --disable-gpu --no-pdf-header-footer --print-to-pdf="$PDF" "$HTML" || fail "chrome render failed"
-  [ -s "$PDF" ] || fail "PDF empty or missing after render"
+  # Isolated profile so a Chrome instance already running can't cause the
+  # headless process to attach and never exit. Watchdog kills it if it hangs
+  # anyway (macOS has no `timeout`); the PDF is usually written before that.
+  CHROME_PROFILE="$(mktemp -d "${TMPDIR:-/tmp}/sweep-chrome.XXXXXX")"
+  "$CHROME" --headless=new --disable-gpu --no-first-run --no-default-browser-check \
+    --user-data-dir="$CHROME_PROFILE" --no-pdf-header-footer \
+    --print-to-pdf="$PDF" "$HTML" &
+  CPID=$!
+  ( sleep 90; kill -9 "$CPID" 2>/dev/null ) & WPID=$!
+  wait "$CPID" 2>/dev/null
+  kill "$WPID" 2>/dev/null
+  rm -rf "$CHROME_PROFILE"
+  if [ ! -s "$PDF" ]; then
+    echo "NOTE: PDF render produced nothing — falling back to HTML-only"
+    PDF="$HTML"
+  fi
 else
   echo "NOTE: Chrome not found at $CHROME — skipping PDF, report is HTML-only"
   PDF="$HTML"

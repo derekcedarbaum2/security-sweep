@@ -31,6 +31,7 @@ fi
 
 # 2. Scheduler
 if [ "$(uname)" = "Darwin" ]; then
+  mkdir -p "$HOME/Library/LaunchAgents"
   PLIST="$HOME/Library/LaunchAgents/com.user.security-sweep.plist"
   cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
