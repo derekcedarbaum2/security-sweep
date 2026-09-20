@@ -4,6 +4,8 @@ A weekly secrets-and-PII sweep for the age of AI agents. Deterministic scanner,
 emailed report, and a one-item-at-a-time remediation session you run with
 whatever coding agent you use. Report-only: it never touches your files.
 
+See a [fictional sample report](docs/sample-report.md) before installing.
+
 ## The problem
 
 If you use AI agents seriously, your machine accumulates exposure fast: MCP
@@ -100,3 +102,15 @@ Mail.app instead of storing a new credential.
   an attacker.
 
 MIT. Built with Claude Code; scanner and report are deterministic Python.
+
+## Support and validation
+
+Python 3.10+ for scanning and HTML reports. macOS is required for the bundled Mail.app delivery; PDF rendering requires Chrome. Linux supports scanning and HTML output.
+
+This is an independently maintained project. Report reproducible bugs through Issues; security reports follow [SECURITY.md](SECURITY.md). The latest release and default branch receive fixes, with no response-time guarantee.
+
+Run the local checks with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
